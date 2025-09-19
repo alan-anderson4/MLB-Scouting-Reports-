@@ -1,0 +1,61 @@
+# Tigers Pitching Scouting Report
+
+This project generates scouting reports for Detroit Tigers pitchers using Statcast data.
+
+## Features
+- Written in **RMarkdown**
+- Outputs **PDF reports**
+- Includes pitch arsenal summaries, strikeout tendencies, heatmaps, and platoon splits
+
+## Example
+📄 See the example report: [pitcher_report_template.pdf]
+
+## How to Run
+1. Open `Full_Team_Scouting_Report_Loop.R` in RStudio  
+2. Make sure `pitcherdata24.rds` is in the same folder, as well as `pitcher_report_template.Rmd`
+3. I am not attaching my .rds file as it is to big, but the code of how I got the data is below
+4. Run the first 10 lines first, if this gives you an error it is because you need to install those libraries through `install.packages()`
+5. Once that is done run the rest of the code and it should generate scouting report for each pitcher in the destination that you choose, 
+	see `output_dir <- "D:/Baseball/Scouting Reports"` (this is where it defaults for me)
+
+## About
+Built by Alan Anderson as a demonstration of automated scouting report generation for MLB front office applications.
+
+
+
+
+
+## RDS Code
+
+library(baseballr)
+
+# Sequence of Ranges
+start_dates <- seq(as.Date("2024-03-28"), as.Date("2024-09-30"), by = "5 days")
+end_dates <- pmin(start_dates + 4, as.Date("2024-09-30"))
+
+# Initialize List to Store Results
+all_pitch_data24 <- list()
+
+# Loop Over Date Ranges
+for(i in seq_along(start_dates)) {
+  message("Querying: ", start_dates[i], " to ", end_dates[i])
+# rate limit to avoid over loading the server(line below this statement)
+  Sys.sleep(3)
+  data <- statcast_search_pitchers(
+    start_date = start_dates[i],
+    end_date = end_dates[i]
+  )
+  
+  all_pitch_data24[[i]] <- data
+}
+
+# Combine all results
+pitcherdata24 <- bind_rows(all_pitch_data24)
+
+# Now Manipulate the Data
+pitcherdata24 <- pitcherdata24 %>%
+  mutate(
+    pitcher_team = ifelse(inning_topbot == "Top", home_team, away_team)
+  )
+
+saveRDS(pitcherdata24, file = "D:/Baseball/pitcherdata24.rds")

@@ -1,0 +1,222 @@
+---
+title: "Tigers Pitching Scouting Report"
+author: "Alan Anderson"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+subtitle: "`r params$pitcher_name`"
+params:
+  pitcher_name: "Skubal, Tarik"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(readr)
+library(scales)
+library(kableExtra)
+library(knitr)
+```
+
+```{r}
+pitcherdata24 <- readRDS("D:/Baseball/pitcherdata24.rds")
+Tigers_Pitching24 <- pitcherdata24 %>%
+  filter(pitcher_team == "DET")
+pitcher_data <- Tigers_Pitching24 %>%
+  filter(player_name == params$pitcher_name)
+```
+
+## Pitch Arsenal Summary
+
+```{r}
+    arsenal_summary <- pitcher_data %>%
+      filter(!is.na(pitch_name) & pitch_name != "") %>%
+      group_by(pitch_name) %>%
+      summarise(
+        usage = n(),
+        `Avg Velo` = round(mean(release_speed, na.rm = TRUE), 1),
+        `Avg Spin` = mean(release_spin_rate, na.rm = TRUE),
+        `Whiff %` = mean(description %in% c("swinging_strike", "swinging_strike_blocked"), na.rm = TRUE) * 100,
+        `XwOBA` = mean(estimated_woba_using_speedangle, na.rm = TRUE),
+        `wOBA` = mean(woba_value, na.rm = TRUE),
+        `H-Mov` = round(mean(pfx_x, na.rm = TRUE) * 12, 1),
+        `V-Mov` = round(mean(pfx_z, na.rm = TRUE) * 12, 1),
+        .groups = "drop"
+      ) %>%
+      mutate(usage_pct = usage / sum(usage) * 100) %>%
+      arrange(desc(usage_pct))
+knitr::kable(arsenal_summary, digits = 2,
+             col.names = c("Pitch", "Usage", "Avg Velo", "Avg Spin", 
+                           "Whiff %", "xwOBA", "wOBA", "H-Mov", "V-Mov", "Usage %")) %>%
+  kable_styling(latex_options = "scale_down", full_width = FALSE)
+```
+
+\vspace{2cm}
+
+## Strikeout Pitch Usage
+
+```{r}
+    strikeout_summary <- pitcher_data %>%
+      group_by(stand) %>%
+      filter(!is.na(pitch_name) & pitch_name != "") %>%
+      filter(!is.na(events) &
+             !is.na(description) &
+             events %in% c("strikeout", "strikeout_double_play") &
+             description %in% c("swinging_strike", "swinging_strike_blocked", "called_strike")) %>%
+      mutate(
+        strike_type = case_when(
+          description %in% c("swinging_strike", "swinging_strike_blocked") ~ "Swinging",
+          description == "called_strike" ~ "Called"
+        )
+      ) %>%
+      count(pitch_name, strike_type) %>%
+      pivot_wider(
+        names_from = strike_type,
+        values_from = n,
+        values_fill = list(n = 0) #fill missing wits zeros
+      ) %>%
+      mutate(
+        Swinging = if (!"Swinging" %in% names(.)) 0 else Swinging,
+        Called = if (!"Called" %in% names(.)) 0 else Called
+      ) %>%
+      mutate(
+        Total = Swinging + Called,
+        `Swinging K %` = if_else(Total > 0, round(Swinging / Total * 100,1), NA_real_),
+        `Called K %` = if_else(Total > 0, round(Called / Total *100,1), NA_real_),
+        `Total K %` = round(Total / sum(Total, na.rm = TRUE) * 100,1)
+        )
+knitr::kable(strikeout_summary, digits = 1,
+             col.names = c("Stand", "Pitch", "Called", "Swinging", "Total", "Swinging K %", "Called K %", "Total K %")) %>%
+  kable_styling(latex_options = "scale_down", full_width = FALSE)
+```
+
+\
+
+## Pitch Location Heatmap
+
+```{r heatmap, fig.width=8, fig.height=5, echo=FALSE}
+    zone_14 <- data.frame(
+      zone = as.character(c(11,12,13,1,2,3,4,5,6,7,8,9,14,10,15)),
+      x = c(-0.63, 0, 0.63, 
+            -0.63, 0, 0.63,
+            -0.63, 0, 0.63,
+            -0.63, 0, 0.63,
+            -0.95, 0, 0.95),
+      y = c(3.83, 3.83, 3.83,
+            3.17, 3.17, 3.17,
+            2.5, 2.5, 2.5,
+            1.83, 1.83, 1.83,
+            1.2, 1.2, 1.2)
+    )
+    
+    # Get individual strike zone boxes (if needed)
+    zone_14_boxes <- zone_14 %>%
+      mutate(
+        xmin = x - 0.3167, xmax = x + 0.3167,
+        ymin = y - 0.3333, ymax = y + 0.3333
+      )
+    
+    heatmap_plot <- pitcher_data %>%
+      filter(!is.na(plate_x), !is.na(plate_z)) %>%
+      ggplot(aes(x = plate_x, y = plate_z)) +
+      stat_density_2d(aes(fill = after_stat(density), alpha = after_stat(density)),
+                      geom = "raster", contour = FALSE) +
+      scale_fill_gradientn(colors = c("white", "yellow", "orange", "red", "blue")) +
+      scale_alpha(range = c(0.2, 1)) +
+      geom_rect(aes(xmin = -0.95, xmax = 0.95, ymin = 1.5, ymax = 3.5),
+                color = "black", fill = NA, linetype = "dashed") +
+      geom_text(data = zone_14, aes(x = x, y = y, label = zone),
+                color = "black", size = 3, fontface = "bold", alpha = 0.75, inherit.aes = FALSE) +
+      coord_fixed(0.8) +
+      labs(
+        #title = paste("Pitch Heatmap by Pitch Type & Hitter Stance -", params$pitcher_name),
+        x = "Horizontal Location (plate_x)",
+        y = "Vertical Location (plate_z)",
+        fill = "Density"
+      ) +
+      theme_dark() +
+      theme(
+        legend.position = "none",
+        panel.background = element_rect(fill = "lightgrey")
+      ) +
+      facet_wrap(~pitch_name, ncol = 3)
+    
+    print(heatmap_plot)
+```
+
+\
+
+## Performance vs Lefties and Righties
+
+```{r}
+    total_by_stand <- pitcher_data %>%
+      group_by(stand) %>%
+      summarise(total_pitches = n(), .groups = "drop")
+    
+    if (all(c("stand", "pitch_type") %in% names(pitcher_data))) {
+      platoon_detailed <- pitcher_data %>%
+        filter(!is.na(pitch_name) & pitch_name != "") %>%
+        group_by(stand, pitch_name) %>%
+        summarise(
+          avg_exit_velo = round(mean(launch_speed, na.rm = TRUE), 1),
+          ba = round(mean(description %in% c("hit_into_play", "hit_into_play_score", "hit_into_play_no_out"), na.rm = TRUE), 3),
+          whiff_rate = round(mean(description %in% c("swinging_strike", "swinging_strike_blocked"), na.rm = TRUE) * 100, 1),
+          pitch_count = n(),
+          .groups = "drop"
+        ) %>%
+        left_join(total_by_stand, by = "stand") %>%
+        mutate(
+          usage_pct = round((pitch_count / total_pitches) * 100, 1)
+        ) %>%
+        arrange(stand, desc(pitch_count)) %>%
+        select(stand, pitch_name, avg_exit_velo, ba, whiff_rate, usage_pct, pitch_count) %>%
+        rename(
+          `Stand` = stand,
+          `Pitch Name` = pitch_name,
+          `Avg Exit Velo` = avg_exit_velo,
+          `Batting Avg` = ba,
+          `Whiff %` = whiff_rate,
+          `Usage %` = usage_pct,
+          `Count` = pitch_count
+        )
+      knitr::kable(platoon_detailed, digits = 2,
+                   col.names = c("Stand", "Pitch", "Avg EV", "BA", "Whiff %", "Usage %", "Count")) %>%
+  kable_styling(latex_options = "scale_down", full_width = FALSE)
+    } else {
+      cat("No platoon data avaliable.")
+    }
+```
+
+\newpage
+## Pitch Tendencies by Count
+
+```{r}
+    count_tendencies <- pitcher_data %>%
+      filter(!is.na(pitch_name) & pitch_name != "") %>%
+      mutate(count = paste0(balls, "-", strikes)) %>%
+      group_by(count, stand, pitch_name,) %>%
+        summarise(
+          usage = n(),
+          avg_velo = round(mean(release_speed, na.rm = TRUE), 1),
+          whiff_pct = round(mean(description %in% c("swinging_strike", "swinging_strike_blocked"), na.rm = TRUE) * 100, 1),
+          .groups = "drop"
+        )  %>%
+        group_by(count, stand) %>%
+        mutate(
+          usage_pct = round(usage / sum(usage) *100, 1)
+        ) %>%
+        ungroup()
+      
+      knitr::kable(count_tendencies, digits = 2,
+                   col.names = c("Count", "Stand", "Pitch", "Usage", "Avg Velo", "Whiff %", "Usage %"),
+                   booktabs = TRUE,
+                   format = "latex",
+                   longtable = TRUE) %>%
+              kable_styling(latex_options = c("scale_down", "striped", "repeat_header"),
+                    full_width = FALSE, font_size = 10, position = "center", stripe_color = "gray!25")
+```
